@@ -50,7 +50,7 @@ public class AdminWindow extends JFrame {
     private int windowCount = 0;
 
     public AdminWindow(ConResSystem system) {
-        super("ConRes  |  v2 — Full login + session UI added");
+        super("ConRes — Admin Dashboard  |  v4: tryLock(15s) + 60s auto-expire countdown");
         this.system = system;
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);

@@ -12,7 +12,26 @@ import java.util.concurrent.locks.*;
 //   - only one user can hold the write lock (exclusive — blocks all readers and writers)
 // the lock is held open between start/stop calls so the admin dashboard
 // can see who is actively reading or writing at any given moment.
+//
+// deadlock avoidance — two mechanisms:
+//   1. consistent lock acquisition order: the semaphore is always acquired before
+//      any file lock (enforced in conressystem). this eliminates circular-wait —
+//      one of coffman's four necessary conditions for deadlock.
+//   2. timeout-based locking: startread() and startwrite() use trylock() instead of
+//      lock(). if a lock cannot be granted within the timeout, a locktimeoutexception
+//      is thrown rather than blocking forever.
 public class SharedFile {
+
+    // maximum seconds to wait for a lock to be granted before giving up
+    public static final int ACQUIRE_TIMEOUT_SECONDS = 15;
+
+    // maximum seconds a user may hold a lock before the userwindow countdown auto-closes
+    public static final int HOLD_TIMEOUT_SECONDS = 60;
+
+    // thrown when trylock does not succeed within acquire_timeout_seconds
+    public static class LockTimeoutException extends Exception {
+        public LockTimeoutException(String msg) { super(msg); }
+    }
 
     private final String fileName;
     private final Path   filePath;
@@ -50,9 +69,15 @@ public class SharedFile {
 
     // ── read ─────────────────────────────────────────────────────────────────
 
-    // acquires the shared read lock — blocks only if a writer currently holds it
-    public void startRead(int userId) {
-        readLock.lock();
+    // tries to acquire the shared read lock within the timeout period.
+    // throws locktimeoutexception if a writer is still holding the lock after 15 seconds.
+    public void startRead(int userId) throws LockTimeoutException, InterruptedException {
+        boolean acquired = readLock.tryLock(ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (!acquired) {
+            throw new LockTimeoutException(
+                "Could not acquire read lock within " + ACQUIRE_TIMEOUT_SECONDS + " seconds. " +
+                "A user is currently writing. Please try again shortly.");
+        }
         currentReaders.add(userId);
     }
 
@@ -64,15 +89,20 @@ public class SharedFile {
 
     // releases the read lock for this user
     public void stopRead(int userId) {
-        if (currentReaders.remove(userId))
-            readLock.unlock();
+        if (currentReaders.remove(userId)) readLock.unlock();
     }
 
     // ── write ────────────────────────────────────────────────────────────────
 
-    // acquires the exclusive write lock — blocks until all readers and writers have released
-    public void startWrite(int userId) {
-        writeLock.lock();
+    // tries to acquire the exclusive write lock within the timeout period.
+    // throws locktimeoutexception if readers or another writer don't release in time.
+    public void startWrite(int userId) throws LockTimeoutException, InterruptedException {
+        boolean acquired = writeLock.tryLock(ACQUIRE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (!acquired) {
+            throw new LockTimeoutException(
+                "Could not acquire write lock within " + ACQUIRE_TIMEOUT_SECONDS + " seconds. " +
+                "Other users are currently reading or writing. Please try again shortly.");
+        }
         currentWriter = userId;
     }
 
@@ -92,4 +122,6 @@ public class SharedFile {
     public String       getFileName()       { return fileName; }
     public Set<Integer> getCurrentReaders() { return Collections.unmodifiableSet(currentReaders); }
     public int          getCurrentWriter()  { return currentWriter; }
+    public int          getAcquireTimeout() { return ACQUIRE_TIMEOUT_SECONDS; }
+    public int          getHoldTimeout()    { return HOLD_TIMEOUT_SECONDS; }
 }

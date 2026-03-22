@@ -62,8 +62,9 @@ public class ConResSystem {
 
     // ── file access ──────────────────────────────────────────────────────────
 
-    // acquires a shared read lock then returns the file contents
-    public String startRead(int userId) {
+    // acquires a shared read lock with timeout, then returns the file contents.
+    // throws locktimeoutexception if the lock is not granted within the timeout period.
+    public String startRead(int userId) throws SharedFile.LockTimeoutException, InterruptedException {
         String uname = activeSessions.getOrDefault(userId, "ID:" + userId);
         log("READ REQUEST   — " + uname + " (ID " + userId + ")  |  acquiring shared read lock...");
         sharedFile.startRead(userId);
@@ -80,8 +81,9 @@ public class ConResSystem {
         notifyChange();
     }
 
-    // acquires the exclusive write lock — blocks until all readers and other writers finish
-    public void startWrite(int userId) {
+    // acquires the exclusive write lock with timeout.
+    // throws locktimeoutexception if the lock is not granted within the timeout period.
+    public void startWrite(int userId) throws SharedFile.LockTimeoutException, InterruptedException {
         String uname = activeSessions.getOrDefault(userId, "ID:" + userId);
         log("WRITE REQUEST  — " + uname + " (ID " + userId + ")  |  acquiring exclusive write lock...");
         sharedFile.startWrite(userId);
