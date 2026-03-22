@@ -51,7 +51,7 @@ public class AdminWindow extends JFrame {
     private int windowCount = 0;
 
     public AdminWindow(ConResSystem system) {
-        super("ConRes  |  v8 — Semaphore over-release race fixed (windowClosed + loggedIn flags)");
+        super("ConRes  |  v9 — FINAL submitted version");
         this.system = system;
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);
