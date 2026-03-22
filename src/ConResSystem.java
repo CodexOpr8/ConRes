@@ -38,14 +38,24 @@ public class ConResSystem {
 
     // ── session control ──────────────────────────────────────────────────────
 
-    // blocks here if 4 users are already active — the calling thread waits on the semaphore
+    // adds the user to the waiting queue and blocks on the semaphore.
+    // if the window is closed while blocked (shutdownnow() sends an interrupt),
+    // the catch block removes the username from the queue before re-throwing —
+    // this is what makes the queue clear instantly when a queued window is closed.
     public void login(String username, int userId) throws InterruptedException {
         waitingQueue.offer(username);
         log("LOGIN REQUEST  — " + username + " (ID " + userId + ")  |  waiting for session slot...");
         notifyChange();
-
-        sessionSemaphore.acquire();
-
+        try {
+            sessionSemaphore.acquire();
+        } catch (InterruptedException e) {
+            // window was closed while blocked — remove from queue and bail out cleanly
+            waitingQueue.remove(username);
+            log("LOGIN CANCELLED — " + username + " (ID " + userId + ")  |  removed from queue (window closed)");
+            notifyChange();
+            Thread.currentThread().interrupt();
+            throw e;
+        }
         waitingQueue.remove(username);
         activeSessions.put(userId, username);
         log("LOGIN SUCCESS  — " + username + " (ID " + userId + ")  |  active: " + activeSessions.size() + " / " + MAX_USERS);
@@ -62,8 +72,7 @@ public class ConResSystem {
 
     // ── file access ──────────────────────────────────────────────────────────
 
-    // acquires a shared read lock with timeout, then returns the file contents.
-    // throws locktimeoutexception if the lock is not granted within the timeout period.
+    // acquires a shared read lock with timeout, then returns the file contents
     public String startRead(int userId) throws SharedFile.LockTimeoutException, InterruptedException {
         String uname = activeSessions.getOrDefault(userId, "ID:" + userId);
         log("READ REQUEST   — " + uname + " (ID " + userId + ")  |  acquiring shared read lock...");
@@ -81,8 +90,7 @@ public class ConResSystem {
         notifyChange();
     }
 
-    // acquires the exclusive write lock with timeout.
-    // throws locktimeoutexception if the lock is not granted within the timeout period.
+    // acquires the exclusive write lock with timeout
     public void startWrite(int userId) throws SharedFile.LockTimeoutException, InterruptedException {
         String uname = activeSessions.getOrDefault(userId, "ID:" + userId);
         log("WRITE REQUEST  — " + uname + " (ID " + userId + ")  |  acquiring exclusive write lock...");
