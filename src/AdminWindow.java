@@ -28,6 +28,7 @@ public class AdminWindow extends JFrame {
 
     private final ConResSystem system;
 
+    // semaphore panel — shows users logged in, not slots available
     private final JLabel   lblUserCount = lbl("0 / 4", 44, GREEN);
     private final JLabel   lblUserSub   = lbl("users logged in", 11, GRAY);
     private final JPanel[] slots        = new JPanel[ConResSystem.MAX_USERS];
@@ -50,7 +51,7 @@ public class AdminWindow extends JFrame {
     private int windowCount = 0;
 
     public AdminWindow(ConResSystem system) {
-        super("ConRes — Admin Dashboard  |  v4: tryLock(15s) + 60s auto-expire countdown");
+        super("ConRes  |  v6 — Duplicate user rejected atomically");
         this.system = system;
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);
@@ -83,7 +84,7 @@ public class AdminWindow extends JFrame {
         JLabel title = lbl("ConRes  —  Admin Dashboard", 18, WHITE);
         title.setFont(new Font("SansSerif", Font.BOLD, 18));
         left.add(title);
-        left.add(lbl("100717312", 11, new java.awt.Color(0x16A34A)));
+        left.add(lbl("100717312", 11, new java.awt.Color(0xEA580C)));
 
         // button to open a new user session window
         JButton btn = new JButton("＋  Open User Session");
@@ -144,7 +145,7 @@ public class AdminWindow extends JFrame {
         p.add(lblUserCount, g);
         g.gridy = 2; p.add(lblUserSub, g);
 
-        // coloured squares — one per slot, filled green when occupied
+        // slot indicators — fill left to right as users log in
         g.gridy = 3; g.insets = new Insets(10, 4, 4, 4);
         JPanel slotRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 5, 0));
         slotRow.setOpaque(false);
@@ -260,7 +261,7 @@ public class AdminWindow extends JFrame {
         Set<Integer> rdr = sf.getCurrentReaders();
         int writer       = sf.getCurrentWriter();
 
-        // update the session count label and colour based on how full the semaphore is
+        // show users logged in (0 to max_users) and colour accordingly
         lblUserCount.setText(active + " / " + ConResSystem.MAX_USERS);
         if      (active == 0)                       lblUserCount.setForeground(GREEN);
         else if (active < ConResSystem.MAX_USERS)   lblUserCount.setForeground(YELLOW);
