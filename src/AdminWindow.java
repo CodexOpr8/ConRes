@@ -51,7 +51,7 @@ public class AdminWindow extends JFrame {
     private int windowCount = 0;
 
     public AdminWindow(ConResSystem system) {
-        super("ConRes  |  v6 — Duplicate user rejected atomically");
+        super("ConRes  |  v8 — Semaphore over-release race fixed (windowClosed + loggedIn flags)");
         this.system = system;
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);

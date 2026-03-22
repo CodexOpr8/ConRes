@@ -2,6 +2,7 @@ package conres;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 // central controller for the concurrent resource access engine.
@@ -30,6 +31,11 @@ public class ConResSystem {
     private final List<Runnable>         changeListeners = Collections.synchronizedList(new ArrayList<>());
     private final List<Consumer<String>> logListeners    = Collections.synchronizedList(new ArrayList<>());
 
+    // incremented exactly once per successful login — gives each window a stable sequence number
+    private final AtomicInteger loginCounter = new AtomicInteger(0);
+
+    public int getLoginCounter() { return loginCounter.get(); }
+
     public void addChangeListener(Runnable r)      { changeListeners.add(r); }
     public void addLogListener(Consumer<String> c) { logListeners.add(c); }
 
@@ -39,8 +45,7 @@ public class ConResSystem {
     // ── session control ──────────────────────────────────────────────────────
 
     // the synchronized block makes the duplicate check and queue insertion atomic.
-    // without this, two threads could both pass the duplicate check before either
-    // had been added to the queue, allowing the same user to log in twice.
+    // without it, two threads could both pass the check before either adds to the queue.
     // throws illegalstateexception if the user is already active or queued.
     public void login(String username, int userId) throws InterruptedException {
         synchronized (this) {
@@ -62,6 +67,7 @@ public class ConResSystem {
         }
         waitingQueue.remove(username);
         activeSessions.put(userId, username);
+        loginCounter.incrementAndGet();
         log("LOGIN SUCCESS  — " + username + " (ID " + userId + ")  |  active: " + activeSessions.size() + " / " + MAX_USERS);
         notifyChange();
     }
