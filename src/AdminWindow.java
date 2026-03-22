@@ -51,7 +51,7 @@ public class AdminWindow extends JFrame {
     private int windowCount = 0;
 
     public AdminWindow(ConResSystem system) {
-        super("ConRes  |  v5 — Queue removal: closing queued window removes from queue");
+        super("ConRes  |  v6 — Duplicate user rejected atomically");
         this.system = system;
 
         setDefaultCloseOperation(EXIT_ON_CLOSE);
@@ -84,7 +84,7 @@ public class AdminWindow extends JFrame {
         JLabel title = lbl("ConRes  —  Admin Dashboard", 18, WHITE);
         title.setFont(new Font("SansSerif", Font.BOLD, 18));
         left.add(title);
-        left.add(lbl("100717312", 11, new java.awt.Color(0x16A34A)));
+        left.add(lbl("100717312", 11, new java.awt.Color(0xEA580C)));
 
         // button to open a new user session window
         JButton btn = new JButton("＋  Open User Session");

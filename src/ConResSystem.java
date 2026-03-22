@@ -38,12 +38,16 @@ public class ConResSystem {
 
     // ── session control ──────────────────────────────────────────────────────
 
-    // adds the user to the waiting queue and blocks on the semaphore.
-    // if the window is closed while blocked (shutdownnow() sends an interrupt),
-    // the catch block removes the username from the queue before re-throwing —
-    // this is what makes the queue clear instantly when a queued window is closed.
+    // the synchronized block makes the duplicate check and queue insertion atomic.
+    // without this, two threads could both pass the duplicate check before either
+    // had been added to the queue, allowing the same user to log in twice.
+    // throws illegalstateexception if the user is already active or queued.
     public void login(String username, int userId) throws InterruptedException {
-        waitingQueue.offer(username);
+        synchronized (this) {
+            if (activeSessions.containsValue(username) || waitingQueue.contains(username))
+                throw new IllegalStateException(username + " is already logged in or waiting.");
+            waitingQueue.offer(username);
+        }
         log("LOGIN REQUEST  — " + username + " (ID " + userId + ")  |  waiting for session slot...");
         notifyChange();
         try {

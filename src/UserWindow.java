@@ -224,7 +224,8 @@ public class UserWindow extends JFrame {
         // pressing enter in the password field triggers login
         fldPass.addActionListener(e -> btnLogin.doClick());
 
-        // login — validates credentials, then calls system.login() on the worker thread
+        // login — validates credentials then calls system.login() on the worker thread.
+        // also catches illegalstateexception thrown when a duplicate user is rejected atomically.
         btnLogin.addActionListener(e -> {
             String user = fldUser.getText().trim();
             String pass = new String(fldPass.getPassword());
@@ -246,6 +247,14 @@ public class UserWindow extends JFrame {
                         setState(State.IDLE);
                         setBar("  No file open.", SUBTXT);
                         cards.show(deck, "session");
+                    });
+                } catch (IllegalStateException ex) {
+                    // login() rejected this user atomically — they are already active or queued
+                    loggedInUser = null; loggedInId = -1;
+                    SwingUtilities.invokeLater(() -> {
+                        msg(ex.getMessage(), RED);
+                        fldPass.setText("");
+                        btnLogin.setEnabled(true);
                     });
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
@@ -358,13 +367,11 @@ public class UserWindow extends JFrame {
             });
         });
 
-        // window close — shutdownnow() sends an interrupt that unblocks semaphore.acquire() in login().
-        // conressystem.login() catches this interrupt, removes the user from the queue, and re-throws,
-        // which is why closing a queued window removes it from the queue immediately.
+        // window close — shutdownnow() interrupts blocked semaphore.acquire() in login()
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) {
                 stopHoldCountdown();
-                worker.shutdownNow(); // interrupt blocks on acquire() so the queue removal fires
+                worker.shutdownNow();
                 State s = state;
                 if (s == State.READING  || s == State.WAIT_READ)  system.stopRead(loggedInId);
                 if (s == State.WRITING  || s == State.WAIT_WRITE) system.cancelWrite(loggedInId);
@@ -390,7 +397,6 @@ public class UserWindow extends JFrame {
                     + (secondsRemaining <= 10 ? "  — " + action + " soon!" : ""));
             } else {
                 stopHoldCountdown();
-                // trigger the correct button — uses the normal release path
                 if (lockState == State.READING) btnClose.doClick();
                 else                            btnCancel.doClick();
             }
