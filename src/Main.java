@@ -1,8 +1,7 @@
 package conres;
 
-// Commit 2 — First GUI: AdminWindow only.
-// UserWindow not built yet — '+ Open User Session' launches the user portal
-// but UserWindow.java is just a stub with a placeholder message for now.
+// entry point — creates the shared backend and launches the admin dashboard on the edt.
+// user windows are opened from within the admin dashboard via the '+ open user session' button.
 public class Main {
     public static void main(String[] args) {
         ConResSystem system = new ConResSystem();

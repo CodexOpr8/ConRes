@@ -1,18 +1,18 @@
 package conres;
 
-import javax.swing.*;
-import javax.swing.border.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.concurrent.*;
+import javax.swing.*;
+import javax.swing.border.*;
 
 // per-user session portal window.
 // operates as a state machine with six states:
 //   logged_out  — login form is shown
 //   idle        — logged in, no file open
-//   wait_read   — acquiring the read lock (buttons hidden to prevent double-clicks)
+//   wait_read   — trylock in progress for read (buttons hidden to prevent double-clicks)
 //   reading     — shared read lock held; close file button shown
-//   wait_write  — acquiring the write lock (buttons hidden)
+//   wait_write  — trylock in progress for write (buttons hidden)
 //   writing     — exclusive write lock held; save & close / cancel buttons shown
 //
 // a dedicated single-thread executor runs all blocking calls (login, read, write)
@@ -48,6 +48,16 @@ public class UserWindow extends JFrame {
         return t;
     });
 
+    // set to true by windowclosing BEFORE shutdownnow() so the worker thread can check it
+    // after semaphore.acquire() returns and call logout itself if the window closed mid-login.
+    // this closes the race where acquire() returns just as the interrupt fires — without this
+    // flag, windowclosing would skip logout (loggedin=false) and the permit would never be released.
+    private volatile boolean windowClosed = false;
+
+    // set to true only after login fully completes — tells windowclosing whether
+    // it needs to release file locks and call logout
+    private volatile boolean loggedIn = false;
+
     // login form fields and controls
     private final JTextField     fldUser  = new JTextField(16);
     private final JPasswordField fldPass  = new JPasswordField(16);
@@ -76,7 +86,7 @@ public class UserWindow extends JFrame {
     private int secondsRemaining = 0;
 
     public UserWindow(ConResSystem system, int num) {
-        super("ConRes — User Portal");
+        super("ConRes — User Portal"); // title updated to username on successful login
         this.system = system;
         setSize(560, 690);
         setMinimumSize(new Dimension(500, 620));
@@ -114,6 +124,7 @@ public class UserWindow extends JFrame {
         return p;
     }
 
+    // login panel
     private JPanel buildLoginPanel() {
         JPanel outer = new JPanel(new GridBagLayout());
         outer.setBackground(BG);
@@ -162,6 +173,7 @@ public class UserWindow extends JFrame {
         return outer;
     }
 
+    // session panel
     private JPanel buildSessionPanel() {
         JPanel p = new JPanel(new BorderLayout(0, 0));
         p.setBackground(BG);
@@ -184,7 +196,7 @@ public class UserWindow extends JFrame {
             btnRow.add(b);
         toolbar.add(btnRow, g);
 
-        // countdown row — shows remaining hold time while a lock is open
+        // countdown row — visible while a lock is held
         g.gridy = 2; g.insets = new Insets(2, 0, 0, 0);
         lblTimer.setFont(new Font("Monospaced", Font.BOLD, 11));
         lblTimer.setForeground(AMBER);
@@ -192,7 +204,7 @@ public class UserWindow extends JFrame {
 
         p.add(toolbar, BorderLayout.NORTH);
 
-        // status bar at the bottom showing the current lock state
+        // status bar at the bottom
         lblBar.setFont(new Font("Monospaced", Font.BOLD, 11));
         lblBar.setForeground(SUBTXT);
         lblBar.setBackground(new Color(22, 30, 55));
@@ -201,6 +213,7 @@ public class UserWindow extends JFrame {
         lblBar.setBorder(new EmptyBorder(0, 10, 0, 10));
         p.add(lblBar, BorderLayout.SOUTH);
 
+        // file content area
         txtFile.setFont(new Font("Monospaced", Font.PLAIN, 12));
         txtFile.setBackground(new Color(15, 23, 42));
         txtFile.setForeground(new Color(190, 240, 200));
@@ -225,7 +238,8 @@ public class UserWindow extends JFrame {
         fldPass.addActionListener(e -> btnLogin.doClick());
 
         // login — validates credentials then calls system.login() on the worker thread.
-        // also catches illegalstateexception thrown when a duplicate user is rejected atomically.
+        // after acquire() returns, we check windowclosed to handle the race where
+        // the window was closed just as the semaphore became available.
         btnLogin.addActionListener(e -> {
             String user = fldUser.getText().trim();
             String pass = new String(fldPass.getPassword());
@@ -242,7 +256,17 @@ public class UserWindow extends JFrame {
             worker.submit(() -> {
                 try {
                     system.login(loggedInUser, loggedInId);
+                    // check if the window was closed while we were blocked in acquire().
+                    // windowclosing saw loggedin=false so it skipped logout —
+                    // we must call logout ourselves here to release the semaphore permit.
+                    if (windowClosed) {
+                        system.logout(loggedInUser, loggedInId);
+                        return;
+                    }
+                    loggedIn = true;
+                    int num = system.getLoginCounter();
                     SwingUtilities.invokeLater(() -> {
+                        setTitle("ConRes — User #" + num + "  (" + loggedInUser + ")");
                         lblStatus.setText("Logged in as:  " + loggedInUser + "  (ID " + loggedInId + ")");
                         setState(State.IDLE);
                         setBar("  No file open.", SUBTXT);
@@ -263,7 +287,7 @@ public class UserWindow extends JFrame {
             });
         });
 
-        // open for reading — uses trylock; shows a popup if the lock times out
+        // open for reading — trylock blocks up to acquire_timeout_seconds
         btnRead.addActionListener(e -> {
             setState(State.WAIT_READ);
             setBar("  Opening file for reading...", SUBTXT);
@@ -279,6 +303,7 @@ public class UserWindow extends JFrame {
                         startHoldCountdown(SharedFile.HOLD_TIMEOUT_SECONDS, State.READING);
                     });
                 } catch (SharedFile.LockTimeoutException ex) {
+                    // lock not granted within timeout — tell the user and return to idle
                     SwingUtilities.invokeLater(() -> {
                         setState(State.IDLE);
                         setBar("  Timeout: " + ex.getMessage(), RED);
@@ -299,7 +324,7 @@ public class UserWindow extends JFrame {
             });
         });
 
-        // open for writing — uses trylock; shows a popup if the lock times out
+        // open for writing — trylock blocks until all readers release or timeout fires
         btnWrite.addActionListener(e -> {
             setState(State.WAIT_WRITE);
             setBar("  Opening file for writing  (waiting if others are currently reading)...", SUBTXT);
@@ -350,14 +375,16 @@ public class UserWindow extends JFrame {
             });
         });
 
-        // logout — releases the session slot so another waiting user can proceed
+        // logout — clears loggedin flag and releases the session slot
         btnLogout.addActionListener(e -> {
             stopHoldCountdown();
             setState(State.LOGGED_OUT);
             worker.submit(() -> {
+                loggedIn = false;
                 system.logout(loggedInUser, loggedInId);
                 loggedInUser = null; loggedInId = -1;
                 SwingUtilities.invokeLater(() -> {
+                    setTitle("ConRes — User Portal");
                     fldUser.setText(""); fldPass.setText("");
                     msg(" ", TXT); btnLogin.setEnabled(true);
                     txtFile.setText(""); txtFile.setEditable(false);
@@ -367,15 +394,23 @@ public class UserWindow extends JFrame {
             });
         });
 
-        // window close — shutdownnow() interrupts blocked semaphore.acquire() in login()
+        // window close — set windowclosed BEFORE shutdownnow so the worker can detect
+        // the race condition where acquire() returns at the same time as the interrupt fires.
+        // only release locks/session if login fully completed — the worker handles the race case.
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) {
                 stopHoldCountdown();
-                worker.shutdownNow();
-                State s = state;
-                if (s == State.READING  || s == State.WAIT_READ)  system.stopRead(loggedInId);
-                if (s == State.WRITING  || s == State.WAIT_WRITE) system.cancelWrite(loggedInId);
-                if (loggedInUser != null) system.logout(loggedInUser, loggedInId);
+                windowClosed = true;      // must be set before shutdownnow
+                worker.shutdownNow();     // interrupts blocked semaphore.acquire() in login()
+                if (loggedIn) {
+                    // login fully completed before close — release any held locks and the session slot
+                    State s = state;
+                    if (s == State.READING  || s == State.WAIT_READ)  system.stopRead(loggedInId);
+                    if (s == State.WRITING  || s == State.WAIT_WRITE) system.cancelWrite(loggedInId);
+                    system.logout(loggedInUser, loggedInId);
+                }
+                // if loggedin=false: either still queued (interrupt handles removal)
+                // or acquire() just returned — the worker's windowclosed check handles logout
             }
         });
     }
@@ -397,8 +432,9 @@ public class UserWindow extends JFrame {
                     + (secondsRemaining <= 10 ? "  — " + action + " soon!" : ""));
             } else {
                 stopHoldCountdown();
-                if (lockState == State.READING) btnClose.doClick();
-                else                            btnCancel.doClick();
+                // fire the correct button — uses the normal release path, not a separate code path
+                if (lockState == State.READING) btnClose.doClick();   // releases read lock
+                else                            btnCancel.doClick();  // releases write lock without saving
             }
         });
         holdCountdown.start();
@@ -411,7 +447,8 @@ public class UserWindow extends JFrame {
 
     private void setState(State s) { this.state = s; applyState(); }
 
-    // shows or hides buttons based on the current state
+    // shows or hides buttons based on the current state.
+    // during wait_* states all buttons are hidden to prevent duplicate lock requests.
     private void applyState() {
         boolean idle    = state == State.IDLE;
         boolean reading = state == State.READING;
